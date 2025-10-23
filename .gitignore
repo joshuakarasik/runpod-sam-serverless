@@ -1,0 +1,22 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.env
+.venv
+venv/
+.DS_Store
+.dockerfile
+gpu.py
+main.py
+
+# Large model file - downloaded during Docker build
+sam_vit_h_4b8939.pth
+*.pth
+
