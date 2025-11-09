@@ -6,11 +6,21 @@ import io
 import torch
 import base64
 import os
+import signal
 from segment_anything import sam_model_registry, SamPredictor
+
+print("RUNPOD DIRECT HANDLER v3 — NO FASTAPI — HARD TIMEOUT ENABLED")
+
+# === HARD KILL ON HANG (CRITICAL) ===
+def force_kill(signum, frame):
+    print("[FATAL] Handler timed out or crashed — forcing container death")
+    os._exit(1)
+
+signal.signal(signal.SIGALRM, force_kill)
 
 # --- Constants ---
 MODEL_TYPE = "vit_h"
-CHECKPOINT_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), f'sam_{MODEL_TYPE}_4b8939.pth')
+CHECKPOINT_PATH = "/app/sam_vit_h_4b8939.pth"  # RunPod mounts it here
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # --- Initialize SAM ---
@@ -102,9 +112,11 @@ def enhance_penis(img, mask, length_scale=LENGTH_SCALE, width_scale=WIDTH_SCALE)
         
     return output
 
-# --- RunPod Handler Function ---
+# === MAIN HANDLER ===
 def handler(job):
-    """RunPod serverless handler function"""
+    job_id = job.get("id", "unknown")
+    print(f"[{job_id}] Started.", flush=True)
+    signal.alarm(90)  # 90-second hard limit
     try:
         # Get input from job
         job_input = job["input"]
@@ -123,7 +135,7 @@ def handler(job):
         image_pil = ImageOps.exif_transpose(image_pil)
         image_np = np.array(image_pil, dtype=np.uint8)
         
-        print(f"image_np shape: {image_np.shape}, dtype: {image_np.dtype}, is_contiguous: {image_np.flags['C_CONTIGUOUS']}")
+        print(f"[{job_id}] image_np shape: {image_np.shape}", flush=True)
         
         if len(image_np.shape) != 3 or image_np.shape[2] != 3:
             raise ValueError(f"Invalid image shape: {image_np.shape}. Expected (H, W, 3)")
@@ -159,22 +171,23 @@ def handler(job):
         enhanced_image_pil.save(buf, format="PNG")
         encoded_enhanced_image_data = base64.b64encode(buf.getvalue()).decode('utf-8')
         
+        print(f"[{job_id}] Finished successfully.", flush=True)
         return {
-            'status': 'success',
-            'enhancedImageData': encoded_enhanced_image_data,
-            'mask_score': float(scores[best_idx])
+            "status": "success",
+            "enhancedImageData": encoded_enhanced_image_data,
+            "mask_score": float(scores[best_idx])
         }
         
     except Exception as e:
-        print(f"Error during image processing: {e}")
         import traceback
-        traceback.print_exc()
-        return {"error": f"Internal server error: {str(e)}"}
-    
+        print(f"[{job_id}] ERROR: {e}\n{traceback.format_exc()}", flush=True)
+        return {"error": f"Processing failed: {str(e)}"}
+
     finally:
+        signal.alarm(0)  # cancel timeout
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
-            print("CUDA cache cleared.")
+        print(f"[{job_id}] CUDA cache cleared.", flush=True)
 
 # Start the RunPod serverless worker
 if __name__ == "__main__":
