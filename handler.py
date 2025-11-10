@@ -7,7 +7,19 @@ import torch
 import base64
 import os
 import signal
+import re
 from segment_anything import sam_model_registry, SamPredictor
+
+# === FIX RUNPOD'S BROKEN ENV VAR (AGAIN) ===
+_raw_port = os.environ.get("RUNPOD_REALTIME_PORT", "")
+if _raw_port and not _raw_port.isdigit():
+    match = re.match(r'^(\d+)', _raw_port)
+    if match:
+        os.environ["RUNPOD_REALTIME_PORT"] = match.group(1)
+        print(f"FIXED RUNPOD_REALTIME_PORT: {_raw_port} → {match.group(1)}")
+    else:
+        os.environ.pop("RUNPOD_REALTIME_PORT", None)
+        print(f"REMOVED invalid RUNPOD_REALTIME_PORT: {_raw_port}")
 
 print("RUNPOD DIRECT HANDLER v3 — NO FASTAPI — HARD TIMEOUT ENABLED")
 
