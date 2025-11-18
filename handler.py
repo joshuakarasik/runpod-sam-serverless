@@ -49,8 +49,8 @@ except Exception as e:
     traceback.print_exc()
 
 # --- Enhancement Parameters ---
-LENGTH_SCALE = 1.3
-WIDTH_SCALE = 1.35
+LENGTH_SCALE = 1.55
+WIDTH_SCALE = 1.45
 HF_BLEND = 0.15
 SMOOTH_BLEND = 0.85
 LIGHT_DIR = np.array([0.0, -0.3, 0.95])
