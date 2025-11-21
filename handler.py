@@ -21,7 +21,7 @@ if _raw_port and not _raw_port.isdigit():
         os.environ.pop("RUNPOD_REALTIME_PORT", None)
         print(f"REMOVED invalid RUNPOD_REALTIME_PORT: {_raw_port}")
 
-print("RUNPOD DIRECT HANDLER v3 — NO FASTAPI — HARD TIMEOUT ENABLED")
+print("RUNPOD DIRECT HANDLER v4 — LAZY MODEL LOADING — HARD TIMEOUT ENABLED")
 
 # === HARD KILL ON HANG (CRITICAL) ===
 def force_kill(signum, frame):
@@ -35,18 +35,33 @@ MODEL_TYPE = "vit_h"
 CHECKPOINT_PATH = "/app/sam_vit_h_4b8939.pth"  # RunPod mounts it here
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# --- Initialize SAM ---
+# --- Lazy-load SAM (moved to handler) ---
 predictor = None
-try:
-    print(f"Loading SAM model ({MODEL_TYPE}) from {CHECKPOINT_PATH}")
-    sam_model = sam_model_registry[MODEL_TYPE](checkpoint=CHECKPOINT_PATH)
-    sam_model.to(device=DEVICE).eval()
-    predictor = SamPredictor(sam_model)
-    print("SAM model loaded successfully.")
-except Exception as e:
-    print(f"Error loading SAM model: {e}")
-    import traceback
-    traceback.print_exc()
+
+def load_sam_model():
+    """Load SAM model on-demand when needed"""
+    global predictor
+    if predictor is not None:
+        return predictor
+
+    print("Loading SAM model on-demand...")
+    try:
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        print(f"Using device: {device}")
+
+        if not torch.cuda.is_available():
+            raise RuntimeError("CUDA is not available. This endpoint requires GPU.")
+
+        sam_model = sam_model_registry[MODEL_TYPE](checkpoint=CHECKPOINT_PATH)
+        sam_model.to(device=device).eval()
+        predictor = SamPredictor(sam_model)
+        print("SAM model loaded successfully.")
+        return predictor
+    except Exception as e:
+        print(f"Error loading SAM model: {e}")
+        import traceback
+        traceback.print_exc()
+        raise
 
 # --- Enhancement Parameters ---
 LENGTH_SCALE = 1.55
@@ -128,7 +143,7 @@ def enhance_penis(img, mask, length_scale=LENGTH_SCALE, width_scale=WIDTH_SCALE)
 def handler(job):
     job_id = job.get("id", "unknown")
     print(f"[{job_id}] Started.", flush=True)
-    signal.alarm(90)  # 90-second hard limit
+    signal.alarm(300)  # 5-minute hard limit (increased from 90s for model processing)
     try:
         # Get input from job
         job_input = job["input"]
@@ -137,9 +152,12 @@ def handler(job):
         
         if not image_data or not bounding_box:
             return {"error": "Missing imageData or boundingBox"}
-        
-        if predictor is None:
-            return {"error": "SAM model not loaded. Server is not ready."}
+
+        # Load SAM model on-demand (when job arrives)
+        try:
+            predictor = load_sam_model()
+        except Exception as e:
+            return {"error": f"Failed to load SAM model: {str(e)}"}
         
         # Decode base64 image
         image_bytes = base64.b64decode(image_data)
@@ -203,5 +221,18 @@ def handler(job):
 
 # Start the RunPod serverless worker
 if __name__ == "__main__":
-    runpod.serverless.start({"handler": handler})
+    print("Starting RunPod serverless worker v4 with lazy model loading...", flush=True)
+    print(f"RunPod SDK version: {runpod.__version__}", flush=True)
+    try:
+        # Configure serverless worker with polling limits
+        config = {
+            "handler": handler,
+            "rp_args": ["--rp_log_level", "INFO"]  # Enable detailed logging
+        }
+        runpod.serverless.start(config)
+    except Exception as e:
+        print(f"FATAL: Failed to start serverless worker: {e}", flush=True)
+        import traceback
+        traceback.print_exc()
+        os._exit(1)
 
