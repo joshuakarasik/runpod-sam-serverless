@@ -21,7 +21,7 @@ if _raw_port and not _raw_port.isdigit():
         os.environ.pop("RUNPOD_REALTIME_PORT", None)
         print(f"REMOVED invalid RUNPOD_REALTIME_PORT: {_raw_port}")
 
-print("RUNPOD DIRECT HANDLER v4 — LAZY MODEL LOADING — HARD TIMEOUT ENABLED")
+print("RUNPOD DIRECT HANDLER v5 — BLACKWELL/CUDA12.8 — LAZY MODEL LOADING — HARD TIMEOUT ENABLED")
 
 # === HARD KILL ON HANG (CRITICAL) ===
 def force_kill(signum, frame):
@@ -38,6 +38,33 @@ DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # --- Lazy-load SAM (moved to handler) ---
 predictor = None
 
+def assert_gpu_can_run_kernels():
+    """Fail fast if this GPU is newer than the PyTorch CUDA kernels we shipped."""
+    if not torch.cuda.is_available():
+        raise RuntimeError("CUDA is not available. This endpoint requires GPU.")
+
+    name = torch.cuda.get_device_name(0)
+    major, minor = torch.cuda.get_device_capability(0)
+    arch = f"sm_{major}{minor}"
+    print(f"GPU: {name} ({arch})")
+    print(f"PyTorch {torch.__version__} CUDA {torch.version.cuda}")
+
+    if hasattr(torch.cuda, "get_arch_list"):
+        arch_list = list(torch.cuda.get_arch_list() or [])
+        print(f"Compiled CUDA archs: {arch_list}")
+        normalized = {a.replace("compute_", "sm_") for a in arch_list}
+        if normalized and arch not in normalized:
+            print(
+                f"WARNING: {arch} is not in compiled arch list {sorted(normalized)}. "
+                "Probing a CUDA kernel next; this will fail on CUDA 11.8 builds."
+            )
+
+    probe = torch.zeros(1, device="cuda")
+    probe = probe + 1
+    torch.cuda.synchronize()
+    print("CUDA kernel probe succeeded.")
+
+
 def load_sam_model():
     """Load SAM model on-demand when needed"""
     global predictor
@@ -46,11 +73,9 @@ def load_sam_model():
 
     print("Loading SAM model on-demand...")
     try:
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        assert_gpu_can_run_kernels()
+        device = torch.device("cuda")
         print(f"Using device: {device}")
-
-        if not torch.cuda.is_available():
-            raise RuntimeError("CUDA is not available. This endpoint requires GPU.")
 
         sam_model = sam_model_registry[MODEL_TYPE](checkpoint=CHECKPOINT_PATH)
         sam_model.to(device=device).eval()
@@ -221,7 +246,7 @@ def handler(job):
 
 # Start the RunPod serverless worker
 if __name__ == "__main__":
-    print("Starting RunPod serverless worker v4 with lazy model loading...", flush=True)
+    print("Starting RunPod serverless worker v5 with Blackwell CUDA 12.8 support...", flush=True)
     print(f"RunPod SDK version: {runpod.__version__}", flush=True)
     try:
         # Configure serverless worker with polling limits
@@ -235,4 +260,3 @@ if __name__ == "__main__":
         import traceback
         traceback.print_exc()
         os._exit(1)
-
