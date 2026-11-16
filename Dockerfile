@@ -21,6 +21,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Download SAM ViT-H weights from the official source
 RUN wget -q https://dl.fbaipublicfiles.com/segment_anything/sam_vit_h_4b8939.pth -O sam_vit_h_4b8939.pth
 
-COPY handler.py .
+COPY handler.py quality.py ./
 
 CMD ["python", "-u", "handler.py"]

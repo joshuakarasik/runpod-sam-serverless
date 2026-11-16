@@ -23,6 +23,7 @@ After GitHub rebuilds the image:
 ## Files
 
 - `handler.py` - RunPod serverless handler function
+- `quality.py` - per-job quality metrics (scalars only; see `METRICS.md`)
 - `Dockerfile` - CUDA 12.8 / PyTorch 2.8 container
 - `requirements.txt` - Python dependencies (does **not** pin an old torch)
 - `sam_vit_h_4b8939.pth` - SAM model weights (downloaded at image build)
@@ -43,3 +44,20 @@ Send POST requests to your RunPod endpoint:
   }
 }
 ```
+
+## Quality metrics
+
+Successful jobs also return `quality`, a flat object of rounded scalar metrics
+(no image data). It is `null` if metrics fail or exceed their 2 second budget;
+the image is never affected. Definitions and versioning: `METRICS.md`.
+
+## Tests (CPU only, no GPU or SAM weights needed)
+
+```bash
+python3.11 -m venv .venv && . .venv/bin/activate
+pip install -r requirements-test.txt
+python -m pytest -q tests
+```
+
+`tests/baseline/handler_v5_514906e.py` is an unmodified copy of the v5 handler.
+The golden tests require the returned PNG to be byte-identical to it.
