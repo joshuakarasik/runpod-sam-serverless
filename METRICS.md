@@ -25,7 +25,7 @@ stretched patch `enhance_penis` blends back into the image.
 | --- | --- | --- | --- |
 | `worker_version` | string | Worker build constant | (bookkeeping) |
 | `metrics_version` | int | Version of these definitions | (bookkeeping) |
-| `mask_score` | float 0-1 | SAM's predicted IoU for the chosen mask | SAM cutout |
+| `mask_score` | float, about 0-1 | SAM's predicted IoU for the chosen mask (not capped: values slightly above 1 occur) | SAM cutout |
 | `mask_score_margin` | float | Best score minus second best. Small means SAM was unsure which object was meant | SAM cutout, or an ambiguous box |
 | `mask_box_fill` | float | Mask area / box area. Low means the box is far bigger than the object | User error (loose box) |
 | `mask_outside_box` | float 0-1 | Fraction of the mask outside the box. High means SAM leaked into surroundings | SAM cutout |
