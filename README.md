@@ -30,7 +30,10 @@ After GitHub rebuilds the image:
 
 ## Deployment
 
-This worker is deployed to RunPod Serverless via GitHub integration.
+This worker is deployed to RunPod Serverless via GitHub integration. Pushes to `main` build and roll out to the
+production endpoint `49ciibx2lucfcd`, which also serves the dev app and the old
+store app. Roll back by setting the endpoint image to an earlier build tag in
+the endpoint's Builds tab.
 
 ## Usage
 
