@@ -21,6 +21,14 @@ if _raw_port and not _raw_port.isdigit():
         os.environ.pop("RUNPOD_REALTIME_PORT", None)
         print(f"REMOVED invalid RUNPOD_REALTIME_PORT: {_raw_port}")
 
+# Quality metrics are optional: if the module is missing or broken, jobs run
+# exactly as before and report quality = null.
+try:
+    import quality as _quality
+except Exception as _quality_import_error:  # pragma: no cover - defensive
+    _quality = None
+    print(f"Quality metrics disabled: {type(_quality_import_error).__name__}")
+
 print("RUNPOD DIRECT HANDLER v5 — BLACKWELL/CUDA12.8 — LAZY MODEL LOADING — HARD TIMEOUT ENABLED")
 
 # === HARD KILL ON HANG (CRITICAL) ===
@@ -99,7 +107,9 @@ FEATHER_RATIO = 0.3
 FEATHER_EXP = 0.6
 
 # --- Enhancement Function ---
-def enhance_penis(img, mask, length_scale=LENGTH_SCALE, width_scale=WIDTH_SCALE):
+def enhance_penis(img, mask, length_scale=LENGTH_SCALE, width_scale=WIDTH_SCALE, info=None):
+    """Returns the enhanced image. `info`, when a dict is passed, receives the
+    paste geometry for quality metrics. It never changes the returned image."""
     mask = mask.astype(np.uint8) * 255
     y_indices, x_indices = np.where(mask > 0)
     if y_indices.size == 0 or x_indices.size == 0:
@@ -132,6 +142,10 @@ def enhance_penis(img, mask, length_scale=LENGTH_SCALE, width_scale=WIDTH_SCALE)
     new_x_min = x_min - offset_x
     patch_x_start = 0
     
+    if info is not None:
+        info["clipped_side"] = bool(new_x_min < 0 or new_x_min + new_w > img.shape[1])
+        info["clipped_bottom"] = bool(y_min + new_h > img.shape[0])
+
     if new_x_min < 0:
         patch_x_start = -new_x_min
         new_x_min = 0
@@ -158,11 +172,36 @@ def enhance_penis(img, mask, length_scale=LENGTH_SCALE, width_scale=WIDTH_SCALE)
         output[y_min:y_end, new_x_min:x_end] = \
             output[y_min:y_end, new_x_min:x_end] * (1 - mask_to_paste[..., None]/255.0) + \
             patch_to_paste * (mask_to_paste[..., None]/255.0)
+        if info is not None:
+            info["paste"] = (y_min, y_end, new_x_min, x_end, base_feather, mask_to_paste)
     else:
         print(f"Warning: Dimension mismatch for blending. Returning original image.")
         return img.copy()
         
     return output
+
+# === QUALITY METRICS (never affect the image, never fail a job) ===
+def _read_orientation(image_pil):
+    try:
+        return image_pil.getexif().get(0x0112)
+    except Exception:
+        return None
+
+
+def _safe_quality(image_np, enhanced_np, masks, scores, best_idx, box, paste_info, exif_orientation):
+    if _quality is None:
+        return None
+    try:
+        return _quality.compute_with_budget(
+            original=image_np, enhanced=enhanced_np, masks=masks, scores=scores, best_idx=best_idx,
+            box=box, paste_info=paste_info, exif_orientation=exif_orientation,
+            budget_s=_quality.BUDGET_S,
+        )
+    except BaseException:
+        # Includes anything raised by the budget wrapper itself. Silent by design:
+        # no message can carry image data.
+        return None
+
 
 # === MAIN HANDLER ===
 def handler(job):
@@ -187,6 +226,7 @@ def handler(job):
         # Decode base64 image
         image_bytes = base64.b64decode(image_data)
         image_pil = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+        exif_orientation = _read_orientation(image_pil)
         image_pil = ImageOps.exif_transpose(image_pil)
         image_np = np.array(image_pil, dtype=np.uint8)
         
@@ -220,17 +260,25 @@ def handler(job):
         best_idx = np.argmax(scores)
         mask = masks[best_idx]
         
-        enhanced_image_np = enhance_penis(image_np, mask)
+        paste_info = {}
+        enhanced_image_np = enhance_penis(image_np, mask, info=paste_info)
         enhanced_image_pil = Image.fromarray(enhanced_image_np)
         buf = io.BytesIO()
         enhanced_image_pil.save(buf, format="PNG")
         encoded_enhanced_image_data = base64.b64encode(buf.getvalue()).decode('utf-8')
-        
+
+        # The PNG is final above. Metrics run afterwards on read-only views,
+        # inside their own time budget, and can only ever yield a dict of
+        # rounded scalars or None.
+        quality_metrics = _safe_quality(image_np, enhanced_image_np, masks, scores, best_idx,
+                                        input_box_np, paste_info, exif_orientation)
+
         print(f"[{job_id}] Finished successfully.", flush=True)
         return {
             "status": "success",
             "enhancedImageData": encoded_enhanced_image_data,
-            "mask_score": float(scores[best_idx])
+            "mask_score": float(scores[best_idx]),
+            "quality": quality_metrics,
         }
         
     except Exception as e:

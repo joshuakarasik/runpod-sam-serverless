@@ -20,3 +20,4 @@ main.py
 sam_vit_h_4b8939.pth
 *.pth
 
+.pytest_cache/
